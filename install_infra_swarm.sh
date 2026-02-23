@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# Se alguém executar com sh, reinicia em bash automaticamente
+if [ -z "${BASH_VERSION:-}" ]; then
+  exec /usr/bin/env bash "$0" "$@"
+fi
+
+set -Eeuo pipefail
 
 # =========================
 # Instalador Minimalista (Swarm) - Docker + Traefik + Portainer
@@ -242,3 +247,4 @@ echo "2) Portas 80 e 443 liberadas (firewall/provedor)"
 echo "3) Logs:"
 
 echo "   docker service logs -f traefik_traefik"
+
