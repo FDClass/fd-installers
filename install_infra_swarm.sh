@@ -240,4 +240,5 @@ warn "Checklist se o SSL não emitir:"
 echo "1) DNS do subdomínio apontando pro IP da VPS"
 echo "2) Portas 80 e 443 liberadas (firewall/provedor)"
 echo "3) Logs:"
+
 echo "   docker service logs -f traefik_traefik"
