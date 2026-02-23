@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Se alguém executar com sh, reinicia em bash automaticamente
+# garante bash mesmo se alguém rodar com sh
 if [ -z "${BASH_VERSION:-}" ]; then
   exec /usr/bin/env bash "$0" "$@"
 fi
@@ -247,4 +247,5 @@ echo "2) Portas 80 e 443 liberadas (firewall/provedor)"
 echo "3) Logs:"
 
 echo "   docker service logs -f traefik_traefik"
+
 
