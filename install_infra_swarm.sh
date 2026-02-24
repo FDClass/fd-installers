@@ -266,6 +266,10 @@ services:
         - "traefik.http.routers.portainer.tls=true"
         - "traefik.http.routers.portainer.tls.certresolver=letsencrypt"
         - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+        - "traefik.http.routers.portainer_http.rule=Host(`${PORTAINER_DOMAIN}`)"
+        - "traefik.http.routers.portainer_http.entrypoints=web"
+        - "traefik.http.routers.portainer_http.middlewares=redirect_https"
+        - "traefik.http.middlewares.redirect_https.redirectscheme.scheme=https"
 
 networks:
   ${NETWORK_NAME}:
