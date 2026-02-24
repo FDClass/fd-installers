@@ -17,7 +17,7 @@ NETWORK_NAME="fdnet"
 LE_EMAIL="derfmusico@gmail.com"
 
 # FIX: Traefik v2.10 (evita bug de API com Docker 29.x)
-TRAEFIK_IMAGE="traefik:v2.10"
+TRAEFIK_IMAGE="traefik:v3.0"
 PORTAINER_IMAGE="portainer/portainer-ce:2.21.4"
 PORTAINER_AGENT_IMAGE="portainer/agent:2.21.4"
 
