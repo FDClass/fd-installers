@@ -7,18 +7,17 @@ fi
 set -Eeuo pipefail
 
 # =========================
-# Instalador Minimalista (Swarm) - Docker + Traefik + Portainer
-# Flags:
-#   --update / --upgrade  -> apt update + apt upgrade antes de instalar
-#   --help                -> ajuda
+# FD Installers - Infra Swarm
+# Docker + Swarm + Traefik + Portainer
+# 1 pergunta: domínio do Portainer
 # =========================
 
-# Padrões do Fred (fixos)
+# Padrões (fixos)
 NETWORK_NAME="fdnet"
 LE_EMAIL="derfmusico@gmail.com"
 
-# Versões (conservadoras)
-TRAEFIK_IMAGE="traefik:v2.11"
+# FIX: Traefik v2.10 (evita bug de API com Docker 29.x)
+TRAEFIK_IMAGE="traefik:v2.10"
 PORTAINER_IMAGE="portainer/portainer-ce:2.21.4"
 PORTAINER_AGENT_IMAGE="portainer/agent:2.21.4"
 
@@ -26,44 +25,9 @@ STACK_DIR="/opt/stacks"
 TRAEFIK_STACK="traefik"
 PORTAINER_STACK="portainer"
 
-DO_SYSTEM_UPGRADE="false"
-
 log()  { echo -e "\n✅ $*\n"; }
 warn() { echo -e "\n⚠️  $*\n"; }
 die()  { echo -e "\n❌ $*\n"; exit 1; }
-
-usage() {
-  cat <<EOF
-Uso:
-  bash $0 [--update|--upgrade] [--help]
-
-Opções:
-  --update, --upgrade   Atualiza o sistema antes de instalar (apt-get update + apt-get upgrade -y)
-  --help                Mostra esta ajuda
-
-Exemplos:
-  bash $0
-  bash $0 --update
-EOF
-}
-
-parse_args() {
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --update|--upgrade)
-        DO_SYSTEM_UPGRADE="true"
-        shift
-        ;;
-      --help|-h)
-        usage
-        exit 0
-        ;;
-      *)
-        die "Parâmetro desconhecido: $1 (use --help)"
-        ;;
-    esac
-  done
-}
 
 need_root() {
   if [[ "${EUID}" -ne 0 ]]; then
@@ -73,20 +37,18 @@ need_root() {
 
 cmd_exists() { command -v "$1" >/dev/null 2>&1; }
 
-update_system_if_requested() {
-  if [[ "${DO_SYSTEM_UPGRADE}" == "true" ]]; then
-    log "Atualizando sistema (apt-get update + apt-get upgrade -y)..."
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update -y
-    apt-get upgrade -y
-    warn "Atualização concluída. Se houver atualização de kernel, pode ser necessário reiniciar a VPS."
-  else
-    log "Pulando atualização do sistema (use --update para atualizar)."
-  fi
+# (Opcional) Atualiza pacotes do sistema
+system_update() {
+  warn "Atualizando pacotes do sistema (apt update/upgrade)..."
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -y
+  apt-get upgrade -y
+  apt-get install -y ca-certificates curl gnupg lsb-release
+  log "Sistema atualizado."
 }
 
 install_docker_ubuntu() {
-  log "Docker não encontrado. Instalando Docker Engine + Compose plugin (oficial) no Ubuntu..."
+  log "Docker não encontrado. Instalando Docker Engine (repo oficial) + Compose plugin no Ubuntu..."
 
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
@@ -102,6 +64,12 @@ install_docker_ubuntu() {
     | tee /etc/apt/sources.list.d/docker.list > /dev/null
 
   apt-get update -y
+
+  # 🔒 Se você quiser fixar versão do Docker (recomendado p/ produção), use:
+  # apt-get install -y docker-ce=5:26.* docker-ce-cli=5:26.* containerd.io docker-buildx-plugin docker-compose-plugin
+  # e rode: apt-mark hold docker-ce docker-ce-cli containerd.io
+
+  # Por padrão, instala o mais atual do repo (funciona com Traefik v2.10)
   apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
   systemctl enable docker
@@ -117,7 +85,7 @@ ensure_docker() {
       if [[ "${ID}" == "ubuntu" ]]; then
         install_docker_ubuntu
       else
-        die "Este script está preparado para Ubuntu. Detectado: ${ID}. Me peça que eu adapto."
+        die "Este script está preparado para Ubuntu. Detectado: ${ID}."
       fi
     else
       die "Não consegui detectar o sistema (sem /etc/os-release)."
@@ -175,32 +143,27 @@ version: "3.8"
 services:
   traefik:
     image: ${TRAEFIK_IMAGE}
-    
-    environment:
-      - DOCKER_API_VERSION=1.44
-      
     command:
       - "--api.dashboard=true"
       - "--api.insecure=false"
 
-      # Docker provider (Swarm) - FORÇANDO socket unix
+      # Docker provider (Swarm)
       - "--providers.docker=true"
       - "--providers.docker.swarmMode=true"
-      - "--providers.docker.endpoint=unix:///var/run/docker.sock"
-      - "--providers.docker.watch=true"
       - "--providers.docker.exposedbydefault=false"
 
       # Entrypoints
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
-      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
-      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
 
-      # Let's Encrypt (HTTP-01 challenge via porta 80)
+      # Let's Encrypt (HTTP-01)
       - "--certificatesresolvers.letsencrypt.acme.email=${LE_EMAIL}"
       - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
       - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
       - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+
+      # Logs úteis
+      - "--log.level=INFO"
     ports:
       - target: 80
         published: 80
@@ -268,10 +231,6 @@ services:
         - "traefik.http.routers.portainer.tls=true"
         - "traefik.http.routers.portainer.tls.certresolver=letsencrypt"
         - "traefik.http.services.portainer.loadbalancer.server.port=9000"
-        - "traefik.http.routers.portainer_http.rule=Host(`${PORTAINER_DOMAIN}`)"
-        - "traefik.http.routers.portainer_http.entrypoints=web"
-        - "traefik.http.routers.portainer_http.middlewares=redirect_https"
-        - "traefik.http.middlewares.redirect_https.redirectscheme.scheme=https"
 
 networks:
   ${NETWORK_NAME}:
@@ -290,33 +249,30 @@ deploy_stacks() {
   docker stack deploy -c "${STACK_DIR}/${PORTAINER_STACK}/docker-compose.yml" "${PORTAINER_STACK}"
 }
 
-post_checks() {
-  log "Aguardando Traefik iniciar (10s)..."
-  sleep 10
-
-  log "Concluído!"
-  echo "Portainer: https://${PORTAINER_DOMAIN}"
-
-  warn "Checklist se o SSL não emitir em 1–3 minutos:"
-  echo "1) DNS do subdomínio apontando pro IP da VPS"
-  echo "2) Portas 80 e 443 liberadas (firewall/provedor)"
-  echo "3) Logs do Traefik:"
-  echo "   docker service logs -f traefik_traefik"
-  echo ""
-  warn "Teste HTTP (porta 80): http://${PORTAINER_DOMAIN}"
-}
-
 # ===== MAIN =====
-parse_args "$@"
 need_root
 
 read -r -p "Subdomínio do Portainer (ex: portainer.cliente.com.br): " PORTAINER_DOMAIN
 [[ -z "${PORTAINER_DOMAIN}" ]] && die "Você precisa informar o domínio do Portainer."
 
-update_system_if_requested
+read -r -p "Deseja atualizar o sistema antes? (recomendado) [s/N]: " DO_UPDATE
+DO_UPDATE="${DO_UPDATE:-N}"
+if [[ "${DO_UPDATE}" =~ ^[sS]$ ]]; then
+  system_update
+fi
+
 ensure_docker
 ensure_swarm
 ensure_network
 write_stacks
 deploy_stacks
-post_checks
+
+log "Concluído!"
+echo "Portainer: https://${PORTAINER_DOMAIN}"
+warn "Checklist se o SSL não emitir em 1–3 minutos:"
+echo "1) DNS do subdomínio apontando pro IP da VPS"
+echo "2) Portas 80 e 443 liberadas"
+echo "3) Logs:"
+echo "   docker service logs -f traefik_traefik"
+echo ""
+echo "Teste HTTP (porta 80): http://${PORTAINER_DOMAIN}"
