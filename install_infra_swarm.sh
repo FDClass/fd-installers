@@ -175,6 +175,10 @@ version: "3.8"
 services:
   traefik:
     image: ${TRAEFIK_IMAGE}
+    
+    environment:
+      - DOCKER_API_VERSION=1.44
+      
     command:
       - "--api.dashboard=true"
       - "--api.insecure=false"
