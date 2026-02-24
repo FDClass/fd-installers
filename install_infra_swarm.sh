@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# Força bash mesmo se alguém tentar rodar com sh
+if [ -z "${BASH_VERSION:-}" ]; then
+  exec /usr/bin/env bash "$0" "$@"
+fi
+
+set -Eeuo pipefail
 
 # =========================
 # Instalador Minimalista (Swarm) - Docker + Traefik + Portainer
