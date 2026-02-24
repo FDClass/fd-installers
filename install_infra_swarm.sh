@@ -18,7 +18,7 @@ NETWORK_NAME="fdnet"
 LE_EMAIL="derfmusico@gmail.com"
 
 # Versões (conservadoras)
-TRAEFIK_IMAGE="traefik:v2.11.2"
+TRAEFIK_IMAGE="traefik:v2.11"
 PORTAINER_IMAGE="portainer/portainer-ce:2.21.4"
 PORTAINER_AGENT_IMAGE="portainer/agent:2.21.4"
 
@@ -193,6 +193,8 @@ services:
       # Entrypoints
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
 
       # Let's Encrypt (HTTP-01 challenge via porta 80)
       - "--certificatesresolvers.letsencrypt.acme.email=${LE_EMAIL}"
