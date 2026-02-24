@@ -181,6 +181,7 @@ services:
 
       # Docker provider (Swarm) - FORÇANDO socket unix
       - "--providers.docker=true"
+      - "--providers.docker.swarmMode=true"
       - "--providers.docker.endpoint=unix:///var/run/docker.sock"
       - "--providers.docker.watch=true"
       - "--providers.docker.exposedbydefault=false"
