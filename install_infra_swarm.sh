@@ -7,7 +7,7 @@ fi
 set -Eeuo pipefail
 
 # =========================
-# Instalador (Swarm) - Docker + Traefik (v3) + Portainer
+# Instalador Minimalista (Swarm) - Docker + Traefik + Portainer
 # 1 pergunta: domínio do Portainer
 # =========================
 
@@ -15,8 +15,9 @@ set -Eeuo pipefail
 NETWORK_NAME="fdnet"
 LE_EMAIL="derfmusico@gmail.com"
 
-# Versões
-TRAEFIK_IMAGE="traefik:v3.0"
+# Versões (pinadas)
+# IMPORTANTE: Traefik v3 (no v3 NÃO existe swarmMode; usa providers.swarm)
+TRAEFIK_IMAGE="traefik:v3.6.2"
 PORTAINER_IMAGE="portainer/portainer-ce:2.21.4"
 PORTAINER_AGENT_IMAGE="portainer/agent:2.21.4"
 
@@ -35,6 +36,22 @@ need_root() {
 }
 
 cmd_exists() { command -v "$1" >/dev/null 2>&1; }
+
+maybe_update_system() {
+  echo
+  read -r -p "Quer atualizar a VPS agora? (recomendado) [s/N]: " UPD
+  UPD="${UPD:-N}"
+  if [[ "${UPD,,}" == "s" || "${UPD,,}" == "sim" ]]; then
+    log "Atualizando pacotes do sistema (apt update/upgrade)..."
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y
+    apt-get upgrade -y
+    apt-get install -y ca-certificates curl gnupg lsb-release
+    log "Sistema atualizado."
+  else
+    warn "Pulando atualização do sistema."
+  fi
+}
 
 install_docker_ubuntu() {
   log "Docker não encontrado. Instalando Docker Engine + Compose plugin (oficial) no Ubuntu..."
@@ -68,7 +85,7 @@ ensure_docker() {
       if [[ "${ID}" == "ubuntu" ]]; then
         install_docker_ubuntu
       else
-        die "Este script está preparado para Ubuntu. Detectado: ${ID}."
+        die "Este script está preparado para Ubuntu. Detectado: ${ID}. Me peça que eu adapto."
       fi
     else
       die "Não consegui detectar o sistema (sem /etc/os-release)."
@@ -87,7 +104,6 @@ ensure_swarm() {
 
   if [[ "${swarm_state}" != "active" ]]; then
     warn "Swarm não está ativo. Inicializando Swarm..."
-
     docker swarm init >/dev/null 2>&1 || {
       warn "Falhou swarm init padrão. Tentando com advertise-addr do IPv4..."
       local ip
@@ -95,7 +111,6 @@ ensure_swarm() {
       [[ -z "${ip}" ]] && die "Não consegui detectar IP para advertise-addr."
       docker swarm init --advertise-addr "${ip}" >/dev/null
     }
-
     log "Swarm inicializado."
   else
     log "Swarm já está ativo."
@@ -119,7 +134,7 @@ write_stacks() {
   mkdir -p "${STACK_DIR}/${TRAEFIK_STACK}"
   mkdir -p "${STACK_DIR}/${PORTAINER_STACK}"
 
-  log "Gerando stack do Traefik (Swarm) [Traefik v3]"
+  log "Gerando stack do Traefik (Swarm) [Traefik v3 + providers.swarm]"
   cat > "${STACK_DIR}/${TRAEFIK_STACK}/docker-compose.yml" <<YAML
 version: "3.8"
 
@@ -127,10 +142,11 @@ services:
   traefik:
     image: ${TRAEFIK_IMAGE}
     command:
+      # Dashboard/API
       - "--api.dashboard=true"
       - "--api.insecure=false"
 
-      # Swarm Provider (Traefik v3)
+      # Provider Swarm (v3)
       - "--providers.swarm=true"
       - "--providers.swarm.endpoint=unix:///var/run/docker.sock"
       - "--providers.swarm.exposedbydefault=false"
@@ -140,11 +156,19 @@ services:
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
 
+      # Redirect HTTP -> HTTPS (global)
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.web.http.redirections.entrypoint.permanent=true"
+
       # Let's Encrypt (HTTP-01 via porta 80)
       - "--certificatesresolvers.letsencrypt.acme.email=${LE_EMAIL}"
       - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
       - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
       - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+
+      # Logs (útil pra debug)
+      - "--log.level=INFO"
 
     ports:
       - target: 80
@@ -164,10 +188,10 @@ services:
       - ${NETWORK_NAME}
 
     deploy:
+      replicas: 1
       placement:
         constraints:
           - node.role == manager
-      replicas: 1
 
 networks:
   ${NETWORK_NAME}:
@@ -234,33 +258,29 @@ deploy_stacks() {
   docker stack deploy -c "${STACK_DIR}/${PORTAINER_STACK}/docker-compose.yml" "${PORTAINER_STACK}"
 }
 
-wait_traefik() {
-  log "Aguardando Traefik iniciar (10s)..."
-  sleep 10
-  if docker service logs --tail 80 traefik_traefik | egrep -qi "command traefik error|removed in v3|deprecated"; then
-    warn "Traefik acusou erro de flags. Veja logs:"
-    docker service logs --tail 120 traefik_traefik
-  fi
+post_checks() {
+  echo
+  log "Concluído!"
+  echo "Portainer (HTTPS): https://${PORTAINER_DOMAIN}"
+  echo "Teste HTTP (porta 80): http://${PORTAINER_DOMAIN}"
+  echo
+  warn "Checklist se o SSL não emitir em 1–3 minutos:"
+  echo "1) DNS do subdomínio apontando pro IP da VPS"
+  echo "2) Portas 80 e 443 liberadas (firewall/provedor)"
+  echo "3) Logs do Traefik:"
+  echo "   docker service logs -f ${TRAEFIK_STACK}_traefik"
 }
 
 # ===== MAIN =====
 need_root
 
-read -r -p "Subdomínio do Portainer (ex: portainer.cliente.com.br): " PORTAINER_DOMAIN
+read -r -p "Subdomínio do Portainer (ex: portainer.facanhadigital.com): " PORTAINER_DOMAIN
 [[ -z "${PORTAINER_DOMAIN}" ]] && die "Você precisa informar o domínio do Portainer."
 
+maybe_update_system
 ensure_docker
 ensure_swarm
 ensure_network
 write_stacks
 deploy_stacks
-wait_traefik
-
-log "Concluído!"
-echo "Portainer (HTTPS): https://${PORTAINER_DOMAIN}"
-echo "Teste HTTP (porta 80): http://${PORTAINER_DOMAIN}"
-warn "Checklist se o SSL não emitir em 1–3 minutos:"
-echo "1) DNS do subdomínio apontando pro IP da VPS"
-echo "2) Portas 80 e 443 liberadas"
-echo "3) Logs do Traefik:"
-echo "   docker service logs -f traefik_traefik"
+post_checks
